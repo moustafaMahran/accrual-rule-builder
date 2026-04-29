@@ -20,21 +20,12 @@ interface RuleAction {
   unit?: string
   formula?: string
   schedule?: Record<string, number>
-  computed_field?: string
 }
 
 interface Scope {
   legal_entities: string[]
   contract_types: string[]
   leave_types: string[]
-}
-
-interface ComputedField {
-  id: string
-  name: string
-  source: string
-  aggregation: string
-  window: string
 }
 
 interface AccrualRule {
@@ -96,11 +87,7 @@ const CONDITION_FIELDS: FieldDef[] = [
   { value: 'period.is_first_month', label: 'Is first month of employment', category: 'Period', type: 'boolean' },
   { value: 'period.is_last_month', label: 'Is termination month', category: 'Period', type: 'boolean' },
   { value: 'period.months_in_cycle', label: 'Months elapsed in cycle', category: 'Period', type: 'number' },
-  // Computed (from attendance/time tracking)
-  { value: 'computed.avg_hours_13w', label: 'Avg hours worked (last 13 weeks)', category: 'Computed', type: 'number', hint: 'Requires attendance data' },
-  { value: 'computed.avg_hours_4w', label: 'Avg hours worked (last 4 weeks)', category: 'Computed', type: 'number', hint: 'Requires attendance data' },
-  { value: 'computed.total_days_worked_month', label: 'Days worked this month', category: 'Computed', type: 'number', hint: 'Requires attendance data' },
-  { value: 'computed.sick_days_ytd', label: 'Sick days taken (YTD)', category: 'Computed', type: 'number' },
+
 ]
 
 const OPERATORS = [
@@ -123,7 +110,6 @@ const ACTION_TYPES = [
   { value: 'accrue_fixed', label: 'Accrue fixed amount', hasParams: true },
   { value: 'accrue_percentage', label: 'Accrue % of normal', hasParams: true },
   { value: 'accrue_by_formula', label: 'Accrue by formula', hasParams: true },
-  { value: 'accrue_by_computed_field', label: 'Accrue based on computed field', hasParams: true },
   { value: 'accrue_monthly_schedule', label: 'Accrue per monthly schedule', hasParams: true },
   { value: 'add_bonus', label: 'Add bonus days', hasParams: true },
   { value: 'set_entitlement', label: 'Set total entitlement to', hasParams: true },
@@ -137,7 +123,6 @@ interface Preset {
   name: string
   description: string
   market: string
-  computed_fields?: Omit<ComputedField, 'id'>[]
   rules: Omit<AccrualRule, 'id'>[]
 }
 
@@ -205,9 +190,6 @@ const PRESETS: Preset[] = [
     name: '13-week avg hours (DACH)',
     description: 'Variable-schedule workers accrue based on 13-week actual hours average',
     market: '🇩🇪',
-    computed_fields: [
-      { name: 'avg_hours_13w', source: 'attendance.worked_hours', aggregation: 'average', window: '13_weeks' },
-    ],
     rules: [
       {
         name: 'Variable schedule → accrue by 13w avg',
@@ -216,7 +198,7 @@ const PRESETS: Preset[] = [
         condition_groups: [{ logic: 'AND', conditions: [
           { field: 'employee.work_schedule', operator: '==', value: 'variable' },
         ]}],
-        action: { type: 'accrue_by_computed_field', computed_field: 'avg_hours_13w', formula: '(computed.avg_hours_13w / full_time_weekly_hours) * base_entitlement' },
+        action: { type: 'accrue_by_formula', formula: '(avg_hours_13w / full_time_weekly_hours) * base_entitlement' },
         enabled: true,
       },
     ],
@@ -307,7 +289,7 @@ function ConditionRow({ condition, onChange, onRemove }: {
         onChange={(e) => onChange({ ...condition, field: e.target.value })}
       >
         <option value="">Select field...</option>
-        {['Employee', 'Absence', 'Period', 'Computed'].map((cat) => (
+        {['Employee', 'Absence', 'Period'].map((cat) => (
           <optgroup key={cat} label={cat}>
             {CONDITION_FIELDS.filter((f) => f.category === cat).map((f) => (
               <option key={f.value} value={f.value}>{f.label}</option>
@@ -464,17 +446,6 @@ function ActionEditor({ action, onChange }: {
           <p className="text-[10px] text-gray-400 mt-1">Variables: base_entitlement, full_time_weekly_hours, computed.*</p>
         </div>
       )}
-      {action.type === 'accrue_by_computed_field' && (
-        <div className="space-y-2">
-          <select className="w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-800" value={action.computed_field ?? ''} onChange={(e) => onChange({ ...action, computed_field: e.target.value })}>
-            <option value="">Select computed field...</option>
-            <option value="avg_hours_13w">Avg hours (13 weeks)</option>
-            <option value="avg_hours_4w">Avg hours (4 weeks)</option>
-            <option value="total_days_worked_month">Days worked this month</option>
-          </select>
-          <input type="text" className="w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-800 font-mono" value={action.formula ?? ''} placeholder="(computed.avg_hours_13w / 40) * base_entitlement" onChange={(e) => onChange({ ...action, formula: e.target.value })} />
-        </div>
-      )}
       {action.type === 'accrue_monthly_schedule' && (
         <MonthlyScheduleEditor schedule={action.schedule ?? {}} onChange={(s) => onChange({ ...action, schedule: s })} />
       )}
@@ -559,66 +530,6 @@ function RuleCard({ rule, onUpdate, onRemove, onDuplicate, onMoveUp, onMoveDown,
   )
 }
 
-function ComputedFieldsPanel({ fields, onChange }: {
-  fields: ComputedField[]
-  onChange: (f: ComputedField[]) => void
-}) {
-  const addField = () => {
-    onChange([...fields, { id: genId(), name: '', source: 'attendance.worked_hours', aggregation: 'average', window: '13_weeks' }])
-  }
-  const removeField = (idx: number) => {
-    onChange(fields.filter((_, i) => i !== idx))
-  }
-  const updateField = (idx: number, updates: Partial<ComputedField>) => {
-    const updated = [...fields]
-    updated[idx] = { ...updated[idx], ...updates }
-    onChange(updated)
-  }
-
-  return (
-    <div className="border border-amber-200 dark:border-amber-800 rounded-xl p-4 bg-amber-50/50 dark:bg-amber-900/10 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <span>📊</span> Computed Fields
-          <span className="text-[10px] font-normal text-gray-500">(derived from attendance/time data)</span>
-        </h3>
-        <button onClick={addField} className="text-[10px] text-amber-700 dark:text-amber-400 hover:text-amber-900 font-medium px-2 py-0.5 rounded hover:bg-amber-100 dark:hover:bg-amber-900/30">+ Add</button>
-      </div>
-      {fields.length === 0 && (
-        <p className="text-[10px] text-gray-400 italic">No computed fields. Add one to use rolling averages or attendance-based metrics in rules.</p>
-      )}
-      <div className="space-y-2">
-        {fields.map((f, idx) => (
-          <div key={f.id} className="flex items-center gap-2 flex-wrap bg-white dark:bg-gray-800 rounded-lg p-2 border border-amber-200 dark:border-amber-800">
-            <input type="text" className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 w-32" value={f.name} placeholder="field name" onChange={(e) => updateField(idx, { name: e.target.value })} />
-            <select className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800" value={f.source} onChange={(e) => updateField(idx, { source: e.target.value })}>
-              <option value="attendance.worked_hours">Worked hours</option>
-              <option value="attendance.worked_days">Worked days</option>
-              <option value="timeoff.sick_days">Sick days taken</option>
-              <option value="timeoff.leave_days">Leave days taken</option>
-            </select>
-            <select className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800" value={f.aggregation} onChange={(e) => updateField(idx, { aggregation: e.target.value })}>
-              <option value="average">Average</option>
-              <option value="sum">Sum</option>
-              <option value="count">Count</option>
-              <option value="max">Max</option>
-            </select>
-            <select className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800" value={f.window} onChange={(e) => updateField(idx, { window: e.target.value })}>
-              <option value="4_weeks">4 weeks</option>
-              <option value="13_weeks">13 weeks</option>
-              <option value="26_weeks">26 weeks</option>
-              <option value="52_weeks">52 weeks</option>
-              <option value="current_month">Current month</option>
-              <option value="ytd">Year to date</option>
-            </select>
-            <button onClick={() => removeField(idx)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function BaseConfigPanel({ config, onChange }: {
   config: BaseConfig
   onChange: (c: BaseConfig) => void
@@ -689,7 +600,6 @@ function BaseConfigPanel({ config, onChange }: {
 
 export default function App() {
   const [rules, setRules] = useState<AccrualRule[]>([])
-  const [computedFields, setComputedFields] = useState<ComputedField[]>([])
   const [baseConfig, setBaseConfig] = useState<BaseConfig>({
     cycle: 'jan_dec',
     cycle_length_months: 12,
@@ -743,10 +653,6 @@ export default function App() {
   const loadPreset = useCallback((preset: Preset) => {
     const newRules = preset.rules.map((r) => ({ ...r, id: genId() }))
     setRules((prev) => [...prev, ...newRules])
-    if (preset.computed_fields) {
-      const newFields = preset.computed_fields.map((f) => ({ ...f, id: genId() }))
-      setComputedFields((prev) => [...prev, ...newFields])
-    }
   }, [])
 
   const generateJSON = () => {
@@ -754,9 +660,6 @@ export default function App() {
       version: 2,
       policy: {
         base: baseConfig,
-        ...(computedFields.length > 0 && {
-          computed_fields: computedFields.map(({ id: _, ...rest }) => rest),
-        }),
         rules: rules.filter((r) => r.enabled).map(({ id: _, enabled: __, ...rest }) => rest),
       },
     }
@@ -778,7 +681,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-indigo-600 dark:text-indigo-400">Accrual Rule Builder v2</h1>
-            <p className="text-xs text-gray-500">Composable IF/THEN rules with AND/OR logic, computed fields, and priority ordering</p>
+            <p className="text-xs text-gray-500">Composable IF/THEN rules with AND/OR logic and priority ordering</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded-full font-medium">
@@ -794,8 +697,7 @@ export default function App() {
           {/* Base config */}
           <BaseConfigPanel config={baseConfig} onChange={setBaseConfig} />
 
-          {/* Computed fields */}
-          <ComputedFieldsPanel fields={computedFields} onChange={setComputedFields} />
+
 
           {/* Rules */}
           <div className="flex items-center justify-between">
@@ -866,7 +768,7 @@ export default function App() {
             </pre>
           </div>
           <p className="text-[10px] text-gray-500 mt-2 text-center">
-            Schema v2 — Rules evaluated top-to-bottom. Condition groups support AND/OR logic. Computed fields derive from attendance data.
+            Schema v2 — Rules evaluated top-to-bottom. Condition groups support AND/OR logic.
           </p>
         </div>
       </div>
