@@ -135,7 +135,9 @@ const RULE_CATEGORIES: RuleCategory[] = [
       { key: 'enabled', label: 'Proration enabled', type: 'boolean', default: true },
       { key: 'method', label: 'Method', type: 'select', options: [
         { value: 'proportional', label: 'Proportional to remaining time' },
+        { value: 'mid_month_cutoff', label: 'Mid-month cutoff (before Nth = full, Nth or later = 0)' },
       ], default: 'proportional', condition: (p) => p.enabled === true },
+      { key: 'cutoff_day', label: 'Cutoff day of month', type: 'number', default: 15, condition: (p) => p.enabled === true && p.method === 'mid_month_cutoff' },
     ],
   },
   {
